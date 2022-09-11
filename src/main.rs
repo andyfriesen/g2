@@ -4,9 +4,9 @@ use std::fmt;
 use clap::Parser;
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
-    Device, Devices, Host, InputCallbackInfo, InputDevices, StreamError, OutputCallbackInfo,
+    Device, Devices, Host, InputCallbackInfo, InputDevices, OutputCallbackInfo, StreamError,
 };
-use ringbuf::RingBuffer;
+use ringbuf::{Consumer, Producer, RingBuffer};
 
 fn list_input_devices(host: &Host) -> Result<(), Box<dyn Error>> {
     let mut i = 0;
@@ -77,6 +77,39 @@ struct Args {
     output_device: Option<usize>,
 }
 
+struct DelayFilter {
+    decay: f32,
+    producer: Producer<f32>,
+    consumer: Consumer<f32>,
+}
+
+impl DelayFilter {
+    fn new(delay_frames: usize, decay: f32) -> DelayFilter {
+        let buffer = RingBuffer::new(delay_frames);
+        let (mut producer, consumer) = buffer.split();
+
+        while !producer.is_full() {
+            producer.push(0.0).expect("Can't fill buffer?");
+        }
+
+        DelayFilter {
+            decay,
+            producer,
+            consumer,
+        }
+    }
+
+    fn filter(&mut self, sample: f32) -> f32 {
+        let last = self.consumer.pop().expect("Delay buffer empty?");
+        let result = sample + last * self.decay;
+        self.producer
+            .push(result)
+            .expect("Unable to refill delay buffer?");
+
+        return result;
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
@@ -100,17 +133,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = supported_config.into();
 
+    let mut delay = DelayFilter::new(10000, 0.8);
+
     let input_data_fn = move |data: &[f32], _cbinfo: &InputCallbackInfo| {
         for datum in data {
-            producer.push(*datum);
+            producer
+                .push(*datum)
+                .expect("Unable to refill output buffer");
         }
     };
 
     let output_data_fn = move |data: &mut [f32], _cbinfo: &OutputCallbackInfo| {
         for sample in data {
             *sample = match consumer.pop() {
-                Some(s) => s,
-                None => 0.0
+                Some(s) => delay.filter(s),
+                None => 0.0,
             }
         }
     };
