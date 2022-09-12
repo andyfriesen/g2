@@ -120,8 +120,8 @@ struct FlangeFilter {
     amplitude: f32,
     delay: usize,
     t: usize,
-    producer: Producer<f32>,
-    consumer: Consumer<f32>,
+    buffer: Vec<f32>,
+    read_offset: usize,
 }
 
 const TWO_PI: f32 = PI * 2.0;
@@ -129,11 +129,9 @@ const TWO_PI: f32 = PI * 2.0;
 #[allow(dead_code)]
 impl FlangeFilter {
     fn new(buffer_size: usize, frequency: f32, amplitude: f32, delay: usize, decay: f32) -> FlangeFilter {
-        let buffer = RingBuffer::new(buffer_size);
-        let (mut producer, consumer) = buffer.split();
-
-        while !producer.is_full() {
-            producer.push(0.0).unwrap();
+        let mut buffer = Vec::with_capacity(buffer_size);
+        for i in 0..buffer_size {
+            buffer.push(0.0);
         }
 
         FlangeFilter {
@@ -142,8 +140,8 @@ impl FlangeFilter {
             amplitude,
             delay,
             t: 0,
-            producer,
-            consumer,
+            buffer,
+            read_offset: 0,
         }
     }
 
@@ -157,23 +155,20 @@ impl FlangeFilter {
         let mut reverse_offset = self.delay;
         reverse_offset += self.offset(self.t);
 
-        let (first, second) = self.consumer.as_slices();
-
-        let second_len = second.len();
-
-        let last = if second_len >= reverse_offset {
-            second[second_len - reverse_offset]
+        let last = if reverse_offset <= self.read_offset {
+            self.buffer[self.read_offset - reverse_offset]
         } else {
-            reverse_offset -= second_len;
-            let first_len = first.len();
-            first[first_len - reverse_offset]
+            reverse_offset += self.read_offset;
+            self.buffer[self.buffer.len() - reverse_offset]
         };
 
         let result = sample + last * self.decay;
 
-        self.consumer.pop().unwrap();
-        self.producer.push(result).unwrap();
-
+        self.buffer[self.read_offset] = result;
+        self.read_offset += 1;
+        if self.read_offset >= self.buffer.len() {
+            self.read_offset = 0;
+        }
         self.t += 1;
 
         result
@@ -182,7 +177,7 @@ impl FlangeFilter {
 
 #[test]
 fn flange_offset() {
-    let ff = FlangeFilter::new(10000, PI / 20.0, 50.0, 1000, 0.5);
+    let ff = FlangeFilter::new(10000, PI / 20.0, 50.0, 1000, 0.9);
 
     for i in 0..50 {
         println!("{}!", ff.offset(i));
