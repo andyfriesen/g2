@@ -1,11 +1,10 @@
-use std::{error::Error, f32::consts::PI};
+use std::error::Error;
 use std::fmt;
 
 use clap::Parser;
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
-    BufferSize, Device, Devices, Host, InputCallbackInfo, InputDevices, OutputCallbackInfo,
-    StreamError,
+    Device, Devices, Host, InputCallbackInfo, InputDevices, OutputCallbackInfo, StreamError,
 };
 use ringbuf::{Consumer, Producer, RingBuffer};
 
@@ -64,10 +63,6 @@ fn on_error(err: StreamError) {
     let _ = err;
 }
 
-// fn open_output_stream(device: &Device) -> Result<Stream, Box<dyn Error>> {
-//     // Next thing: Copy the input data stream to the output
-// }
-
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
@@ -124,13 +119,17 @@ struct FlangeFilter {
     read_offset: usize,
 }
 
-const TWO_PI: f32 = PI * 2.0;
-
 #[allow(dead_code)]
 impl FlangeFilter {
-    fn new(buffer_size: usize, frequency: f32, amplitude: f32, delay: usize, decay: f32) -> FlangeFilter {
+    fn new(
+        buffer_size: usize,
+        frequency: f32,
+        amplitude: f32,
+        delay: usize,
+        decay: f32,
+    ) -> FlangeFilter {
         let mut buffer = Vec::with_capacity(buffer_size);
-        for i in 0..buffer_size {
+        for _ in 0..buffer_size {
             buffer.push(0.0);
         }
 
@@ -151,24 +150,32 @@ impl FlangeFilter {
         res as usize
     }
 
-    fn filter(&mut self, sample: f32) -> f32 {
-        let mut reverse_offset = self.delay;
-        reverse_offset += self.offset(self.t);
-
-        let last = if reverse_offset <= self.read_offset {
+    fn read_buffer(&self, reverse_offset: usize) -> f32 {
+        if reverse_offset <= self.read_offset {
             self.buffer[self.read_offset - reverse_offset]
         } else {
-            reverse_offset += self.read_offset;
-            self.buffer[self.buffer.len() - reverse_offset]
-        };
+            self.buffer[self.buffer.len() - reverse_offset - self.read_offset]
+        }
+    }
 
-        let result = sample + last * self.decay;
-
-        self.buffer[self.read_offset] = result;
+    fn write_buffer(&mut self, sample: f32) {
+        self.buffer[self.read_offset] = sample;
         self.read_offset += 1;
         if self.read_offset >= self.buffer.len() {
             self.read_offset = 0;
         }
+    }
+
+    fn filter(&mut self, sample: f32) -> f32 {
+        let mut reverse_offset = self.delay;
+        reverse_offset += self.offset(self.t);
+
+        let last = self.read_buffer(reverse_offset);
+
+        let result = sample + last * self.decay;
+
+        self.write_buffer(result);
+
         self.t += 1;
 
         result
