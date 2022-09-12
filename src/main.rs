@@ -1,10 +1,11 @@
-use std::error::Error;
+use std::{error::Error, f32::consts::PI};
 use std::fmt;
 
 use clap::Parser;
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
-    Device, Devices, Host, InputCallbackInfo, InputDevices, OutputCallbackInfo, StreamError,
+    BufferSize, Device, Devices, Host, InputCallbackInfo, InputDevices, OutputCallbackInfo,
+    StreamError,
 };
 use ringbuf::{Consumer, Producer, RingBuffer};
 
@@ -77,12 +78,14 @@ struct Args {
     output_device: Option<usize>,
 }
 
+#[allow(dead_code)]
 struct DelayFilter {
     decay: f32,
     producer: Producer<f32>,
     consumer: Consumer<f32>,
 }
 
+#[allow(dead_code)]
 impl DelayFilter {
     fn new(delay_frames: usize, decay: f32) -> DelayFilter {
         let buffer = RingBuffer::new(delay_frames);
@@ -110,6 +113,82 @@ impl DelayFilter {
     }
 }
 
+#[allow(dead_code)]
+struct FlangeFilter {
+    decay: f32,
+    frequency: f32,
+    amplitude: f32,
+    delay: usize,
+    t: usize,
+    producer: Producer<f32>,
+    consumer: Consumer<f32>,
+}
+
+const TWO_PI: f32 = PI * 2.0;
+
+#[allow(dead_code)]
+impl FlangeFilter {
+    fn new(buffer_size: usize, frequency: f32, amplitude: f32, delay: usize, decay: f32) -> FlangeFilter {
+        let buffer = RingBuffer::new(buffer_size);
+        let (mut producer, consumer) = buffer.split();
+
+        while !producer.is_full() {
+            producer.push(0.0).unwrap();
+        }
+
+        FlangeFilter {
+            decay,
+            frequency,
+            amplitude,
+            delay,
+            t: 0,
+            producer,
+            consumer,
+        }
+    }
+
+    fn offset(&self, t: usize) -> usize {
+        let f = self.frequency * t as f32;
+        let res: f32 = (f.cos() + 1.0) * self.amplitude;
+        res as usize
+    }
+
+    fn filter(&mut self, sample: f32) -> f32 {
+        let mut reverse_offset = self.delay;
+        reverse_offset += self.offset(self.t);
+
+        let (first, second) = self.consumer.as_slices();
+
+        let second_len = second.len();
+
+        let last = if second_len >= reverse_offset {
+            second[second_len - reverse_offset]
+        } else {
+            reverse_offset -= second_len;
+            let first_len = first.len();
+            first[first_len - reverse_offset]
+        };
+
+        let result = sample + last * self.decay;
+
+        self.consumer.pop().unwrap();
+        self.producer.push(result).unwrap();
+
+        self.t += 1;
+
+        result
+    }
+}
+
+#[test]
+fn flange_offset() {
+    let ff = FlangeFilter::new(10000, PI / 20.0, 50.0, 1000, 0.5);
+
+    for i in 0..50 {
+        println!("{}!", ff.offset(i));
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
@@ -133,7 +212,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = supported_config.into();
 
-    let mut delay = DelayFilter::new(10000, 0.8);
+    // let mut delay = DelayFilter::new(10000, 0.9);
+    let mut flange = FlangeFilter::new(10000, 0.001, 50.0, 1000, 0.7);
 
     let input_data_fn = move |data: &[f32], _cbinfo: &InputCallbackInfo| {
         for datum in data {
@@ -146,7 +226,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output_data_fn = move |data: &mut [f32], _cbinfo: &OutputCallbackInfo| {
         for sample in data {
             *sample = match consumer.pop() {
-                Some(s) => delay.filter(s),
+                // Some(s) => delay.filter(s),
+                Some(s) => flange.filter(s),
                 None => 0.0,
             }
         }
