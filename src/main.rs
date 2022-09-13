@@ -1,4 +1,4 @@
-use std::error::Error;
+use std::{error::Error, f32::consts::PI};
 use std::fmt;
 
 use clap::Parser;
@@ -113,11 +113,12 @@ struct FlangeFilter {
     decay: f32,
     frequency: f32,
     amplitude: f32,
-    delay: usize,
     t: usize,
     buffer: Vec<f32>,
     read_offset: usize,
 }
+
+const TWO_PI: f32 = PI * 0.5;
 
 #[allow(dead_code)]
 impl FlangeFilter {
@@ -125,7 +126,6 @@ impl FlangeFilter {
         buffer_size: usize,
         frequency: f32,
         amplitude: f32,
-        delay: usize,
         decay: f32,
     ) -> FlangeFilter {
         let mut buffer = Vec::with_capacity(buffer_size);
@@ -137,17 +137,10 @@ impl FlangeFilter {
             decay,
             frequency,
             amplitude,
-            delay,
             t: 0,
             buffer,
             read_offset: 0,
         }
-    }
-
-    fn offset(&self, t: usize) -> usize {
-        let f = self.frequency * t as f32;
-        let res: f32 = (f.cos() + 1.0) * self.amplitude;
-        res as usize
     }
 
     fn read_buffer(&self, reverse_offset: usize) -> f32 {
@@ -166,9 +159,14 @@ impl FlangeFilter {
         }
     }
 
+    fn offset(&self, t: usize) -> usize {
+        let f = TWO_PI * self.frequency * t as f32;
+        let res: f32 = (f.cos() + 1.0) * self.amplitude;
+        res as usize
+    }
+
     fn filter(&mut self, sample: f32) -> f32 {
-        let mut reverse_offset = self.delay;
-        reverse_offset += self.offset(self.t);
+        let reverse_offset = self.offset(self.t);
 
         let last = self.read_buffer(reverse_offset);
 
@@ -184,7 +182,7 @@ impl FlangeFilter {
 
 #[test]
 fn flange_offset() {
-    let ff = FlangeFilter::new(10000, PI / 20.0, 50.0, 1000, 0.9);
+    let ff = FlangeFilter::new(10000, 0.000, 44.1, 0.9);
 
     for i in 0..50 {
         println!("{}!", ff.offset(i));
@@ -215,7 +213,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = supported_config.into();
 
     // let mut delay = DelayFilter::new(10000, 0.9);
-    let mut flange = FlangeFilter::new(10000, 0.001, 50.0, 1000, 0.7);
+    let mut flange = FlangeFilter::new(10000, 0.00001, 50.0, 0.7);
 
     let input_data_fn = move |data: &[f32], _cbinfo: &InputCallbackInfo| {
         for datum in data {
