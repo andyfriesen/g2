@@ -1,5 +1,5 @@
-use std::{error::Error, f32::consts::PI};
 use std::fmt;
+use std::{error::Error, f32::consts::PI};
 
 use clap::Parser;
 use cpal::{
@@ -8,10 +8,20 @@ use cpal::{
 };
 use ringbuf::{Consumer, Producer, RingBuffer};
 
+fn list_output_devices(host: &Host) -> Result<(), Box<dyn Error>> {
+    let mut i = 0;
+    for device in host.output_devices()? {
+        println!("Output device {}: {}", i, device.name()?);
+        i += 1;
+    }
+
+    Ok(())
+}
+
 fn list_input_devices(host: &Host) -> Result<(), Box<dyn Error>> {
     let mut i = 0;
     for device in host.input_devices()? {
-        println!("Device {}: {}", i, device.name()?);
+        println!("Input device {}: {}", i, device.name()?);
         i += 1;
     }
 
@@ -122,12 +132,7 @@ const TWO_PI: f32 = PI * 0.5;
 
 #[allow(dead_code)]
 impl FlangeFilter {
-    fn new(
-        buffer_size: usize,
-        frequency: f32,
-        amplitude: f32,
-        decay: f32,
-    ) -> FlangeFilter {
+    fn new(buffer_size: usize, frequency: f32, amplitude: f32, decay: f32) -> FlangeFilter {
         let mut buffer = Vec::with_capacity(buffer_size);
         for _ in 0..buffer_size {
             buffer.push(0.0);
@@ -144,10 +149,10 @@ impl FlangeFilter {
     }
 
     fn read_buffer(&self, reverse_offset: usize) -> f32 {
-        if reverse_offset <= self.read_offset {
+        if self.read_offset >= reverse_offset {
             self.buffer[self.read_offset - reverse_offset]
         } else {
-            self.buffer[self.buffer.len() - reverse_offset - self.read_offset]
+            self.buffer[self.buffer.len() - reverse_offset + self.read_offset]
         }
     }
 
@@ -182,9 +187,12 @@ impl FlangeFilter {
 
 #[test]
 fn flange_offset() {
-    let ff = FlangeFilter::new(10000, 0.000, 44.1, 0.9);
+    let ff = FlangeFilter::new(10000, 0.1, 50.0, 0.7);
 
-    for i in 0..50 {
+    // assert_eq!(100, ff.offset(0));
+    // assert_eq!(0, ff.offset(50));
+
+    for i in 0..100 {
         println!("{}!", ff.offset(i));
     }
 }
@@ -195,6 +203,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let host = cpal::default_host();
 
     list_input_devices(&host)?;
+    list_output_devices(&host)?;
 
     let input_device = nth_input_device(&host, args.input_device)?;
     let output_device = nth_output_device(&host, args.output_device)?;
