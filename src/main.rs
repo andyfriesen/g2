@@ -141,7 +141,6 @@ struct FlangeFilter {
     read_offset: usize,
 }
 
-// TODO: Normalize t and frequency to seconds.  Requires knowing the sampling rate.
 #[allow(dead_code)]
 impl FlangeFilter {
     fn new(
@@ -210,9 +209,12 @@ impl FlangeFilter {
     }
 }
 
+// Distortion is easy: You magnify the signal, then clamp samples to make the wave more square.
 #[allow(dead_code)]
 struct DistortFilter {
     gain: f32,
+
+    // Min/max value to clamp outgoing samples to.  Should be 1.0 or less.
     saturation: f32,
 }
 
