@@ -210,6 +210,23 @@ impl FlangeFilter {
     }
 }
 
+#[allow(dead_code)]
+struct DistortFilter {
+    gain: f32,
+    saturation: f32,
+}
+
+#[allow(dead_code)]
+impl DistortFilter {
+    fn new(gain: f32, saturation: f32) -> DistortFilter {
+        DistortFilter { gain, saturation }
+    }
+
+    fn filter(&self, sample: f32) -> f32 {
+        (sample * self.gain).clamp(-self.saturation, self.saturation)
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
@@ -242,7 +259,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("");
 
     // let mut delay = DelayFilter::new(10000, 0.9);
-    let mut flange = FlangeFilter::new(10000, config.sample_rate, 0.5, 100.0, 0.8);
+    // let mut filter = FlangeFilter::new(10000, config.sample_rate, 0.5, 100.0, 0.8);
+    let filter = DistortFilter::new(12.0, 0.7);
 
     let input_data_fn = move |data: &[f32], _cbinfo: &InputCallbackInfo| {
         for datum in data {
@@ -255,8 +273,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output_data_fn = move |data: &mut [f32], _cbinfo: &OutputCallbackInfo| {
         for sample in data {
             *sample = match consumer.pop() {
-                // Some(s) => delay.filter(s),
-                Some(s) => flange.filter(s),
+                Some(s) => filter.filter(s),
                 None => 0.0,
             }
         }
