@@ -2,11 +2,11 @@ use std::fmt;
 use std::{error::Error, f32::consts::PI};
 
 use clap::Parser;
-use cpal::{StreamConfig, SampleRate};
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     Device, Devices, Host, InputCallbackInfo, InputDevices, OutputCallbackInfo, StreamError,
 };
+use cpal::{SampleRate, StreamConfig};
 use ringbuf::{Consumer, Producer, RingBuffer};
 
 fn list_output_devices(host: &Host) -> Result<(), Box<dyn Error>> {
@@ -121,31 +121,43 @@ impl DelayFilter {
 
 #[allow(dead_code)]
 struct FlangeFilter {
-    sample_rate: SampleRate,
     decay: f32,
-    frequency: f32,
     amplitude: f32,
+
+    // convert from time in samples to an input to cosine such that we hit
+    // 2pi as t hits sample_rate * frequency
+    offset_coefficient: f32,
+
+    // elapsed time in samples
     t: f32,
+
     buffer: Vec<f32>,
     read_offset: usize,
 }
 
-const TWO_PI: f32 = PI * 0.5;
-
 // TODO: Normalize t and frequency to seconds.  Requires knowing the sampling rate.
 #[allow(dead_code)]
 impl FlangeFilter {
-    fn new(buffer_size: usize, sample_rate: SampleRate, frequency: f32, amplitude: f32, decay: f32) -> FlangeFilter {
+    fn new(
+        buffer_size: usize,
+        sample_rate: SampleRate,
+        frequency: f32,
+        amplitude: f32,
+        decay: f32,
+    ) -> FlangeFilter {
         let mut buffer = Vec::with_capacity(buffer_size);
         for _ in 0..buffer_size {
             buffer.push(0.0);
         }
 
+        let SampleRate(sr) = sample_rate;
+
+        let offset_coefficient = PI / (2.0 * frequency * sr as f32);
+
         FlangeFilter {
-            sample_rate,
             decay,
-            frequency,
             amplitude,
+            offset_coefficient,
             t: 0.0,
             buffer,
             read_offset: 0,
@@ -171,7 +183,7 @@ impl FlangeFilter {
     }
 
     fn offset(&self, t: f32) -> usize {
-        let f = (self.frequency * t) / TWO_PI;
+        let f = t * self.offset_coefficient;
         let res = (f.cos() + 1.0) * self.amplitude + 1.0;
 
         res as usize
@@ -190,22 +202,6 @@ impl FlangeFilter {
 
         result
     }
-}
-
-#[test]
-fn flange_offset() {
-    let frequency = TWO_PI;
-    let ff = FlangeFilter::new(10000, SampleRate(48000), frequency, 100.0, 0.8);
-
-    assert_eq!(201, ff.offset(0.0));
-    assert_eq!(100, ff.offset(45.0 * TWO_PI));
-    assert_eq!(1, ff.offset(90.0 * TWO_PI));
-    assert_eq!(101, ff.offset(135.0 * TWO_PI));
-    assert_eq!(201, ff.offset(180.0 * TWO_PI));
-    assert_eq!(100, ff.offset(225.0 * TWO_PI));
-    assert_eq!(1, ff.offset(270.0 * TWO_PI));
-    assert_eq!(100, ff.offset(315.0 * TWO_PI));
-    assert_eq!(201, ff.offset(360.0 * TWO_PI));
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -236,7 +232,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("");
 
     // let mut delay = DelayFilter::new(10000, 0.9);
-    let mut flange = FlangeFilter::new(10000, config.sample_rate, 0.00001 * 2.0 * PI, 100.0, 0.8);
+    let mut flange = FlangeFilter::new(10000, config.sample_rate, 0.5, 100.0, 0.8);
 
     let input_data_fn = move |data: &[f32], _cbinfo: &InputCallbackInfo| {
         for datum in data {
