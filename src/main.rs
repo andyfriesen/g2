@@ -77,11 +77,17 @@ fn on_error(err: StreamError) {
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
+    /// Input device
     #[clap(short, long, value_parser)]
     input_device: Option<usize>,
 
+    /// Output device
     #[clap(short, long, value_parser)]
     output_device: Option<usize>,
+
+    /// List available input and output devices
+    #[clap(long)]
+    list: bool,
 }
 
 #[allow(dead_code)]
@@ -209,8 +215,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let host = cpal::default_host();
 
-    list_input_devices(&host)?;
-    list_output_devices(&host)?;
+    if args.list {
+        list_input_devices(&host)?;
+        println!("");
+        list_output_devices(&host)?;
+        return Ok(());
+    }
 
     let input_device = nth_input_device(&host, args.input_device)?;
     let output_device = nth_output_device(&host, args.output_device)?;
